@@ -16,7 +16,7 @@ cv2.setMouseCallback('RGB', RGB)
 model = YOLO("yolo11s.pt")
 names=model.model.names
 # Open the video file (use video file or webcam, here using webcam)
-cap = cv2.VideoCapture('RGB.mp4')
+cap = cv2.VideoCapture('people1.avi')
 count=0
 cy1=390
 cy2=400
@@ -56,39 +56,50 @@ while True:
             x1, y1, x2, y2 = box
             cx= int(x1+x2)//2
             cy= int(y1+y2)//2
-
-            # Check crossing lines for entering 
+         
+        # Check crossing lines for entering 
             if cy1<(cy+offset) and cy1<(cy-offset): 
                 inp[track_id]= (cx,cy)
-            if track_id in inp and track_id not in enter:
+            if track_id in inp:
                 if cy2<(cy+offset) and cy2<(cy-offset):
                     cv2.circle(frame,(cx,cy),4,(255,0,0),-1)
-                    cv2.rectangle(frame,(x1,y1),(x2,y2),(255,0,0),2)
+                    cv2.rectangle(frame,(x1,y1),(x2,y2),(0,255,0),2)
                     cvzone.putTextRect(frame,f'{track_id}',(x1,y2),1,1)
                     cvzone.putTextRect(frame,f'{c}',(x1,y1),1,1)
                     if enter.count(track_id) == 0:
-                       enter.append(track_id)
-            # Check the crossing lines for exiting
-            if track_id in exp and track_id not in exit and track_id not in enter:
+                        enter.append(track_id)
+            
+        # Check the crossing lines for exiting
+            if cy2<(cy+offset) and cy2<(cy-offset): 
                 exp[track_id] = (cx, cy)
-
-                if cy2 < (cy + offset) and cy2 > (cy - offset):
+            if track_id in exp:
+                if cy1 < (cy + offset) and cy1 > (cy - offset):
                     cv2.circle(frame, (cx, cy), 4, (255,0, 0), -1)
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (255,0, 0), 2)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0,255, 0), 2)
                     cvzone.putTextRect(frame, f'{track_id}', (x1, y2), 1, 1)
                     cvzone.putTextRect(frame, f'{c}', (x1, y1), 1, 1)
                     if exit.count(track_id) == 0:
-                        exit.append(track_id)
+                       exit.append(track_id)
 
-
-    cv2.line(frame,(270,400),(900,400),(0,0,255),2)
-    cv2.line(frame,(268,390),(900,390),(255,0,255),2)
+    cv2.line(frame,(270,400),(900,400),(0,255,0),2)
+    cv2.line(frame,(268,390),(900,390),(255,255,0),2)
     enterp=len(enter)
     cvzone.putTextRect(frame,f'ENTERPERSON:{enterp}',(50,60),2,2)
     exitp = len(exit)
-    cvzone.putTextRect(frame, f'EXITPERSON:{exitp}', (50, 100), 2, 2)
+    cvzone.putTextRect(frame, f'EXITPERSON:{exitp}', (50,100), 2, 2)
+
 
     cv2.imshow("RGB", frame)
+    # Check if the 15-minute interval has elapsed
+    if time.time() - start_time > interval_duration:
+        # Display counts of enter and exit passengers
+        print(f"Passengers Entered in 15 minutes: {len(enter)}")
+        print(f"Passengers Exited in 15 minutes: {len(exitp)}")
+        
+        # Reset for the next interval
+        start_time = time.time()
+        enter.clear()
+        exitp.clear()
 
     if cv2.waitKey(1) & 0xFF == ord("q"):
        break
