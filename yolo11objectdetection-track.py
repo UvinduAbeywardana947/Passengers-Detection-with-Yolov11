@@ -2,8 +2,18 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 import cvzone
-import time
+from tensorflow.keras.models import load_model
 
+
+# Load gender classification model
+gender_model = load_model("E:\yolo11peoplecounter-main\myvenv\models\gender_classification_model.h5")  # Replace with your model path
+gender_labels = ['Male', 'Female']
+
+# Load age classification model
+age_model = load_model("E:\yolo11peoplecounter-main\myvenv\models\age_classification_model.h5")  # Replace with your model path
+age_labels = ['0-10', '11-20', '21-30', '31-40', '41-50', '51-60', '61-70', '71+']  # Replace based on your model
+
+# Mouse event for debugging (optional)
 def RGB(event, x, y, flags, param):
     if event == cv2.EVENT_MOUSEMOVE:
         point = [x, y]
@@ -12,99 +22,120 @@ def RGB(event, x, y, flags, param):
 cv2.namedWindow('RGB')
 cv2.setMouseCallback('RGB', RGB)
 
-# Load the YOLO11 model
+# Load the YOLO model
 model = YOLO("yolo11s.pt")
-names=model.model.names
-# Open the video file (use video file or webcam, here using webcam)
-cap = cv2.VideoCapture('people1.avi')
-count=0
-cy1=390
-cy2=400
-offset=8
-inp={}
-enter=[]
-exp={}
-exit=[]
+names = model.model.names
 
-# Timer for 15-minute intervals
-start_time = time.time()
-interval_duration = 15 * 60  # 15 minutes in seconds
+# Open the video file
+cap = cv2.VideoCapture('Maradana.mp4')
+
+# Initialize variables
+count = 0
+cy1 = 370  # Enter line (green)
+cy2 = 450  # Exit line (blue)
+offset = 20  # Line buffer zone
+track_data = {}  # Store position history, counted status, gender, and age for each track ID
+enter_data = {'Male': {}, 'Female': {}}  # Dictionary to track entry counts by age group
+exit_data = {'Male': {}, 'Female': {}}
+
+# Initialize age group dictionaries
+for gender in ['Male', 'Female']:
+    for age in age_labels:
+        enter_data[gender][age] = 0
+        exit_data[gender][age] = 0
 
 while True:
-    ret,frame = cap.read()
+    ret, frame = cap.read()
     if not ret:
         break
-    count += 1
-    if count % 3 != 0:
-        continue
 
+    count += 1  # Frame counter
+
+    # Resize frame for consistent processing
     frame = cv2.resize(frame, (1020, 600))
-    
-    # Run YOLO11 tracking on the frame, persisting tracks between frames
-    results = model.track(frame, persist=True,classes=0)
 
-    # Check if there are any boxes in the results
+    # Run YOLO tracking on the frame
+    results = model.track(frame, persist=True, classes=0, conf=0.25)
+
+    # Check if there are detections
     if results[0].boxes is not None and results[0].boxes.id is not None:
-        # Get the boxes (x, y, w, h), class IDs, track IDs, and confidences
-        boxes = results[0].boxes.xyxy.int().cpu().tolist()  # Bounding boxes
-        class_ids = results[0].boxes.cls.int().cpu().tolist()  # Class IDs
-        track_ids = results[0].boxes.id.int().cpu().tolist()  # Track IDs
-        confidences = results[0].boxes.conf.cpu().tolist()  # Confidence score
-       
+        # Get bounding boxes, class IDs, track IDs, and confidences
+        boxes = results[0].boxes.xyxy.int().cpu().tolist()
+        class_ids = results[0].boxes.cls.int().cpu().tolist()
+        track_ids = results[0].boxes.id.int().cpu().tolist()
+        confidences = results[0].boxes.conf.cpu().tolist()
+
         for box, class_id, track_id, conf in zip(boxes, class_ids, track_ids, confidences):
             c = names[class_id]
             x1, y1, x2, y2 = box
-            cx= int(x1+x2)//2
-            cy= int(y1+y2)//2
-         
-        # Check crossing lines for entering 
-            if cy1<(cy+offset) and cy1<(cy-offset): 
-                inp[track_id]= (cx,cy)
-            if track_id in inp:
-                if cy2<(cy+offset) and cy2<(cy-offset):
-                    cv2.circle(frame,(cx,cy),4,(255,0,0),-1)
-                    cv2.rectangle(frame,(x1,y1),(x2,y2),(0,255,0),2)
-                    cvzone.putTextRect(frame,f'{track_id}',(x1,y2),1,1)
-                    cvzone.putTextRect(frame,f'{c}',(x1,y1),1,1)
-                    if enter.count(track_id) == 0:
-                        enter.append(track_id)
-            
-        # Check the crossing lines for exiting
-            if cy2<(cy+offset) and cy2<(cy-offset): 
-                exp[track_id] = (cx, cy)
-            if track_id in exp:
-                if cy1 < (cy + offset) and cy1 > (cy - offset):
-                    cv2.circle(frame, (cx, cy), 4, (255,0, 0), -1)
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0,255, 0), 2)
-                    cvzone.putTextRect(frame, f'{track_id}', (x1, y2), 1, 1)
-                    cvzone.putTextRect(frame, f'{c}', (x1, y1), 1, 1)
-                    if exit.count(track_id) == 0:
-                       exit.append(track_id)
+            cx = (x1 + x2) // 2
+            cy = (y1 + y2) // 2
 
-    cv2.line(frame,(270,400),(900,400),(0,255,0),2)
-    cv2.line(frame,(268,390),(900,390),(255,255,0),2)
-    enterp=len(enter)
-    cvzone.putTextRect(frame,f'ENTERPERSON:{enterp}',(50,60),2,2)
-    exitp = len(exit)
-    cvzone.putTextRect(frame, f'EXITPERSON:{exitp}', (50,100), 2, 2)
+            # Initialize or update track data
+            if track_id not in track_data:
+                # Crop the detected person for gender and age classification
+                crop = frame[y1:y2, x1:x2]
+                crop = cv2.resize(crop, (64, 64))  # Resize to model input size
+                crop = np.expand_dims(crop / 255.0, axis=0)  # Normalize and expand dimensions
 
+                # Predict gender
+                gender_pred = gender_model.predict(crop)[0]
+                gender = gender_labels[np.argmax(gender_pred)]
 
+                # Predict age
+                age_pred = age_model.predict(crop)[0]
+                age = age_labels[np.argmax(age_pred)]
+
+                # Initialize track data
+                track_data[track_id] = {'positions': [], 'counted': False, 'gender': gender, 'age': age}
+
+            # Update position history
+            track_data[track_id]['positions'].append(cy)
+
+            # Check movement direction
+            positions = track_data[track_id]['positions']
+            gender = track_data[track_id]['gender']
+            age = track_data[track_id]['age']
+            if len(positions) > 1 and not track_data[track_id]['counted']:
+                # Movement downward (entering)
+                if positions[-2] < cy1 <= positions[-1] < cy2:
+                    enter_data[gender][age] += 1
+                    track_data[track_id]['counted'] = True
+                    cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
+
+                # Movement upward (exiting)
+                elif positions[-2] > cy2 >= positions[-1] > cy1:
+                    exit_data[gender][age] += 1
+                    track_data[track_id]['counted'] = True
+                    cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+
+            # Draw bounding boxes and information
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cvzone.putTextRect(frame, f'{track_id}', (x1, y2), 1, 1)
+            cvzone.putTextRect(frame, f'{c} {gender}, {age}', (x1, y1), 1, 1)
+
+    # Draw enter and exit lines
+    cv2.line(frame, (270, cy1), (900, cy1), (0, 255, 0), 2)  # Enter line (green)
+    cv2.line(frame, (270, cy2), (900, cy2), (255, 255, 0), 2)  # Exit line (blue)
+
+    # Display counts on the frame
+    y_offset = 60
+    for gender in ['Male', 'Female']:
+        for age in age_labels:
+            enter_text = f'ENTER {gender} {age}: {enter_data[gender][age]}'
+            exit_text = f'EXIT {gender} {age}: {exit_data[gender][age]}'
+            cvzone.putTextRect(frame, enter_text, (50, y_offset), 2, 2)
+            y_offset += 40
+            cvzone.putTextRect(frame, exit_text, (50, y_offset), 2, 2)
+            y_offset += 40
+
+    # Show frame
     cv2.imshow("RGB", frame)
-    # Check if the 15-minute interval has elapsed
-    if time.time() - start_time > interval_duration:
-        # Display counts of enter and exit passengers
-        print(f"Passengers Entered in 15 minutes: {len(enter)}")
-        print(f"Passengers Exited in 15 minutes: {len(exitp)}")
-        
-        # Reset for the next interval
-        start_time = time.time()
-        enter.clear()
-        exitp.clear()
 
+    # Break loop on 'q' key press
     if cv2.waitKey(1) & 0xFF == ord("q"):
-       break
+        break
 
-# Release the video capture object and close the display window
+# Release the video capture and close windows
 cap.release()
 cv2.destroyAllWindows()
-
